@@ -39,18 +39,38 @@ You are an advanced algorithm designed to extract structured information from te
 1. Extract only explicitly stated information from the text.
 2. Establish relationships among the entities provided.
 3. Use "USER_ID" as the source entity for any self-references (e.g., "I," "me," "my," etc.) in user messages.
+4. Use actions and detailed adverbials that describe the actions.
+5. Use standardized verbs and predicates for relationships:
+   **General Format**: Use present tense, lowercase, underscores for spaces
+   **Action-Based**: visited, purchased, ate, drank, posted, viewed, created
+   **Social**: interacted_with, messaged, followed, liked, shared
+   **Possession**: has, owns, uses, contains, includes
+   **Attribute/State**: is_a, is_located_at, belongs_to, works_at, studies_at
+   **Temporal**: happened_on, happens_before, happens_after
+   **Preference**: likes, loves, hates, prefers, interested_in
+
+   Examples:
+   - "went to" → visited
+   - "bought" → purchased
+   - "ate" → consumed
+   - "posted on" → posted_to
+   - "works at" → employed_by
+   - "likes" → interested_in
+
 CUSTOM_PROMPT
 
 Relationships:
     - Use consistent, general, and timeless relationship types.
     - Example: Prefer "professor" over "became_professor."
     - Relationships should only be established among the entities explicitly mentioned in the user message.
+    - Always use the standardized verb list above. Do not create custom relationship types.
+    - If no exact match exists, choose the closest standardized verb (e.g., "watched" → viewed).
 
 Entity Consistency:
     - Ensure that relationships are coherent and logically align with the context of the message.
     - Maintain consistent naming for entities across the extracted data.
 
-Strive to construct a coherent and easily understandable knowledge graph by establishing all the relationships among the entities and adherence to the user’s context.
+Strive to construct a coherent and easily understandable knowledge graph by establishing all the relationships among the entities and adherence to the user's context.
 
 Adhere strictly to these guidelines to ensure high-quality knowledge graph extraction."""
 
