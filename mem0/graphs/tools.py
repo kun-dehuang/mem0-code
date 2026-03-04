@@ -86,7 +86,7 @@ RELATIONS_TOOL = {
     "type": "function",
     "function": {
         "name": "establish_relationships",
-        "description": "Establish relationships among the entities based on the provided text.",
+        "description": "Establish relationships among the entities based on the provided text. Use standardized present-tense verbs for relationships (e.g., visited, purchased, posted_to, interested_in, works_at).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -98,7 +98,7 @@ RELATIONS_TOOL = {
                             "source": {"type": "string", "description": "The source entity of the relationship."},
                             "relationship": {
                                 "type": "string",
-                                "description": "The relationship between the source and destination entities.",
+                                "description": "The relationship between source and destination. Use standardized present-tense verbs in lowercase with underscores for spaces (e.g., visited, purchased, posted_to, interested_in).",
                             },
                             "destination": {
                                 "type": "string",
@@ -125,7 +125,7 @@ EXTRACT_ENTITIES_TOOL = {
     "type": "function",
     "function": {
         "name": "extract_entities",
-        "description": "Extract entities and their types from the text.",
+        "description": "Extract entities and classify them into exactly one type: person, place, object, or category. DO NOT extract verbs or actions as entities. DO NOT extract time expressions, dates, or temporal words (e.g., tomorrow, yesterday, next week, January, 3pm, appointment, schedule, deadline, time, date).",
         "parameters": {
             "type": "object",
             "properties": {
@@ -134,8 +134,12 @@ EXTRACT_ENTITIES_TOOL = {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "entity": {"type": "string", "description": "The name or identifier of the entity."},
-                            "entity_type": {"type": "string", "description": "The type or category of the entity."},
+                            "entity": {"type": "string", "description": "The name or identifier of the entity (lowercase, underscores for spaces). DO NOT include verbs or action words."},
+                            "entity_type": {
+                                "type": "string",
+                                "enum": ["person", "place", "object", "category"],
+                                "description": "MUST be one of: person, place, object, category",
+                            },
                         },
                         "required": ["entity", "entity_type"],
                         "additionalProperties": False,
@@ -239,7 +243,7 @@ RELATIONS_STRUCT_TOOL = {
     "type": "function",
     "function": {
         "name": "establish_relations",
-        "description": "Establish relationships among the entities based on the provided text.",
+        "description": "Establish relationships among the entities based on the provided text. Use standardized present-tense verbs for relationships (e.g., visited, purchased, posted_to, interested_in, works_at).",
         "strict": True,
         "parameters": {
             "type": "object",
@@ -255,7 +259,7 @@ RELATIONS_STRUCT_TOOL = {
                             },
                             "relationship": {
                                 "type": "string",
-                                "description": "The relationship between the source and destination entities.",
+                                "description": "The relationship between source and destination. Use standardized present-tense verbs in lowercase with underscores for spaces (e.g., visited, purchased, posted_to, interested_in).",
                             },
                             "destination": {
                                 "type": "string",
@@ -282,7 +286,7 @@ EXTRACT_ENTITIES_STRUCT_TOOL = {
     "type": "function",
     "function": {
         "name": "extract_entities",
-        "description": "Extract entities and their types from the text.",
+        "description": "Extract entities and classify them into exactly one type: person, place, object, or category. DO NOT extract verbs or actions as entities. DO NOT extract time expressions, dates, or temporal words (e.g., tomorrow, yesterday, next week, January, 3pm, appointment, schedule, deadline, time, date).",
         "strict": True,
         "parameters": {
             "type": "object",
@@ -292,8 +296,12 @@ EXTRACT_ENTITIES_STRUCT_TOOL = {
                     "items": {
                         "type": "object",
                         "properties": {
-                            "entity": {"type": "string", "description": "The name or identifier of the entity."},
-                            "entity_type": {"type": "string", "description": "The type or category of the entity."},
+                            "entity": {"type": "string", "description": "The name or identifier of the entity (lowercase, underscores for spaces). DO NOT include verbs or action words."},
+                            "entity_type": {
+                                "type": "string",
+                                "enum": ["person", "place", "object", "category"],
+                                "description": "MUST be one of: person, place, object, category",
+                            },
                         },
                         "required": ["entity", "entity_type"],
                         "additionalProperties": False,

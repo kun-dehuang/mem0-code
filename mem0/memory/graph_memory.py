@@ -22,8 +22,8 @@ from mem0.graphs.tools import (
 )
 from mem0.graphs.utils import EXTRACT_RELATIONS_PROMPT, get_delete_messages
 from mem0.utils.factory import EmbedderFactory, LlmFactory
-
-logger = logging.getLogger(__name__)
+# 获取与 memory-select 相同的 logger
+logger = logging.getLogger("memory_debug")
 
 
 class MemoryGraph:
@@ -81,6 +81,13 @@ class MemoryGraph:
             data (str): The data to add to the graph.
             filters (dict): A dictionary containing filters to be applied during the addition.
         """
+
+        # 获取与 memory-select 相同的 logger
+        logger = logging.getLogger("memory_debug")
+
+        # 然后就可以写入日志了
+        logger.info("[MEM0 INTERNAL] add")
+
         entity_type_map = self._retrieve_nodes_from_data(data, filters)
         to_be_added = self._establish_nodes_relations_from_data(data, filters, entity_type_map)
         search_output = self._search_graph_db(node_list=list(entity_type_map.keys()), filters=filters)
@@ -107,8 +114,25 @@ class MemoryGraph:
                 - "contexts": List of search results from the base data store.
                 - "entities": List of related graph data based on the query.
         """
+        # 然后就可以写入日志了
+        logger.info("=" * 80)
+        logger.info("[GRAPH SEARCH] Starting graph search")
+        logger.info(f"[GRAPH SEARCH] query: '{query}'")
+        logger.info(f"[GRAPH SEARCH] filters: {filters}")
+        logger.info(f"[GRAPH SEARCH] limit: {limit}")
+
         entity_type_map = self._retrieve_nodes_from_data(query, filters)
-        search_output = self._search_graph_db(node_list=list(entity_type_map.keys()), filters=filters)
+        logger.info(f"[GRAPH SEARCH] Extracted entity_type_map: {entity_type_map}")
+        logger.info(f"[GRAPH SEARCH] entity_type_map keys: {list(entity_type_map.keys())}")
+
+        node_list = list(entity_type_map.keys())
+        if not node_list:
+            logger.warning("[GRAPH SEARCH] No entities extracted from query! Search will return empty results.")
+            logger.warning("[GRAPH SEARCH] This is likely because LLM did not return any tool_calls in _retrieve_nodes_from_data")
+            return []
+
+        search_output = self._search_graph_db(node_list=node_list, filters=filters)
+        logger.info(f"[GRAPH SEARCH] _search_graph_db returned {len(search_output)} results")
 
         if not search_output:
             return []
@@ -120,6 +144,7 @@ class MemoryGraph:
 
         tokenized_query = query.split(" ")
         reranked_results = bm25.get_top_n(tokenized_query, search_outputs_sequence, n=5)
+        logger.info(f"Reranked results: {reranked_results}")
 
         search_results = []
         for item in reranked_results:
@@ -195,27 +220,167 @@ class MemoryGraph:
 
     def _retrieve_nodes_from_data(self, data, filters):
         """Extracts all the entities mentioned in the query."""
+        logger.info(f"[ENTITY EXTRACTION] Input data: '{data[:200]}...'")  # Log first 200 chars
+        logger.info(f"[ENTITY EXTRACTION] Filters: {filters}")
+        logger.info(f"[ENTITY EXTRACTION] LLM provider: {self.llm_provider}")
+
         _tools = [EXTRACT_ENTITIES_TOOL]
+        nodes_prompt = f'''
+### Task
+Extract entities from the text and classify them into EXACTLY ONE of the 4 predefined categories below.
+
+### Entity Type Categories (MUST use one of these)
+1. **person** - Individual people, social roles, or the user themselves
+2. **place** - Geographic locations, venues, buildings, or points of interest
+3. **object** - All other entities including food, organizations, events, apps, products, projects
+4. **category** - Abstract concepts, interests, topics, or fields of study
+
+### Special Rules
+1. Self-Reference (I, me, my, myself) → entity: "{filters['user_id']}", type: "person"
+2. User mentioned by name → entity: "{filters['user_id']}", type: "person"
+3. If input is a QUESTION, DO NOT answer it. Only extract entities mentioned.
+4. Each entity MUST have ONE of the 4 types above. NO OTHER types allowed.
+5. DO NOT extract verbs or actions as entities (e.g., "walking", "running", "discussing").
+   Instead, extract related objects or places (e.g., from "walk in the park", extract "park" as place).
+6. DO NOT extract time expressions, dates, or temporal words as entities.
+   Examples to EXCLUDE:
+   - Relative time: tomorrow, yesterday, next week, last month, soon, later
+   - Absolute time: January 2024, 3pm, Monday, 2025年
+   - Time-related words: appointment, schedule, deadline, time, date
+
+### Examples
+
+Input: "My boss and I discussed Project X at a cafe in Barcelona."
+Output:
+- {filters['user_id']} | person
+- boss | person
+- project_x | object
+- cafe | place
+- barcelona | place
+
+Input: "I love photography, sunset views, and eating sushi."
+Output:
+- {filters['user_id']} | person
+- photography | category
+- sunset | category
+- sushi | object
+
+Input: "I posted a photo on Instagram about the company retreat."
+Output:
+- {filters['user_id']} | person
+- photo | object
+- instagram | object
+- company_retreat | object
+
+Input: "What is my doctor's appointment at the hospital schedule?"
+Output:
+- {filters['user_id']} | person
+- doctor | person
+- hospital | object
+
+Input: "I had coffee at Starbucks near my office."
+Output:
+- {filters['user_id']} | person
+- coffee | object
+- starbucks | object
+- office | place
+
+Now extract entities from the text above, using ONLY the 4 allowed types.
+        '''
         if self.llm_provider in ["azure_openai_structured", "openai_structured"]:
             _tools = [EXTRACT_ENTITIES_STRUCT_TOOL]
         search_results = self.llm.generate_response(
             messages=[
                 {
                     "role": "system",
-                    "content": f"You are a smart assistant who understands entities and their types in a given text. If user message contains self reference such as 'I', 'me', 'my' etc. then use {filters['user_id']} as the source entity. Extract all the entities from the text. ***DO NOT*** answer the question itself if the given text is a question.",
+                    "content": nodes_prompt,
                 },
                 {"role": "user", "content": data},
             ],
             tools=_tools,
         )
 
+        # Debug log: log search_results structure
+        logger.info(f"[ENTITY EXTRACTION] search_results type: {type(search_results)}")
+        logger.info(f"[ENTITY EXTRACTION] search_results keys: {search_results.keys() if isinstance(search_results, dict) else 'N/A'}")
+        logger.info(f"[ENTITY EXTRACTION] search_results content: {search_results}")
+
         entity_type_map = {}
 
         try:
-            for tool_call in search_results["tool_calls"]:
-                if tool_call["name"] != "extract_entities":
+            tool_calls = search_results.get("tool_calls", [])
+            logger.info(f"[ENTITY EXTRACTION] tool_calls count: {len(tool_calls)}")
+
+            if not tool_calls:
+                logger.warning("[ENTITY EXTRACTION] No tool_calls in LLM response! This is the problem!")
+                logger.warning("[ENTITY EXTRACTION] LLM may have returned text directly instead of using tools")
+                # Check if there's a 'content' field
+                if isinstance(search_results, dict) and "content" in search_results:
+                    content = search_results['content']
+                    logger.warning(f"[ENTITY EXTRACTION] LLM returned content instead of tool_calls: {content[:500]}")
+                    # Try to parse JSON from content (Gemini sometimes returns JSON in content instead of tool_calls)
+                    import json
+                    import re
+                    parsed = False
+
+                    # Method 1: Try JSON array in markdown code blocks
+                    try:
+                        json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+                        if json_match:
+                            json_str = json_match.group(1)
+                            entities = json.loads(json_str)
+                            logger.info(f"[ENTITY EXTRACTION] Successfully parsed {len(entities)} entities from JSON markdown")
+                            for item in entities:
+                                entity_type_map[item["entity"]] = item["entity_type"]
+                            parsed = True
+                    except (json.JSONDecodeError, KeyError, Exception) as e:
+                        logger.debug(f"[ENTITY EXTRACTION] Method 1 failed: {e}")
+
+                    # Method 2: Try plain JSON array
+                    if not parsed:
+                        try:
+                            json_match = re.search(r'\[\s*\{.*?\}\s*\]', content, re.DOTALL)
+                            if json_match:
+                                json_str = json_match.group(0)
+                                entities = json.loads(json_str)
+                                logger.info(f"[ENTITY EXTRACTION] Successfully parsed {len(entities)} entities from plain JSON")
+                                for item in entities:
+                                    entity_type_map[item["entity"]] = item["entity_type"]
+                                parsed = True
+                        except (json.JSONDecodeError, KeyError, Exception) as e:
+                            logger.debug(f"[ENTITY EXTRACTION] Method 2 failed: {e}")
+
+                    # Method 3: Parse bullet point format "- entity | type"
+                    if not parsed:
+                        try:
+                            lines = content.strip().split('\n')
+                            for line in lines:
+                                line = line.strip()
+                                # Match "- entity | type" or "* entity | type"
+                                match = re.match(r'^[\-\*]\s*(.+?)\s*\|\s*(.+)$', line)
+                                if match:
+                                    entity = match.group(1).strip()
+                                    entity_type = match.group(2).strip()
+                                    entity_type_map[entity] = entity_type
+                            if entity_type_map:
+                                logger.info(f"[ENTITY EXTRACTION] Successfully parsed {len(entity_type_map)} entities from bullet format")
+                                parsed = True
+                        except Exception as e:
+                            logger.debug(f"[ENTITY EXTRACTION] Method 3 failed: {e}")
+
+                    if not parsed:
+                        logger.warning(f"[ENTITY EXTRACTION] All parsing methods failed")
+
+            for tool_call in tool_calls:
+                logger.info(f"[ENTITY EXTRACTION] tool_call: {tool_call}")
+                if tool_call.get("name") != "extract_entities":
+                    logger.info(f"[ENTITY EXTRACTION] Skipping tool: {tool_call.get('name')}")
                     continue
-                for item in tool_call["arguments"]["entities"]:
+                args = tool_call.get("arguments", {})
+                entities = args.get("entities", [])
+                logger.info(f"[ENTITY EXTRACTION] extract_entities arguments: {args}")
+                logger.info(f"[ENTITY EXTRACTION] entities count: {len(entities)}")
+                for item in entities:
                     entity_type_map[item["entity"]] = item["entity_type"]
         except Exception as e:
             logger.exception(
@@ -223,7 +388,10 @@ class MemoryGraph:
             )
 
         entity_type_map = {k.lower().replace(" ", "_"): v.lower().replace(" ", "_") for k, v in entity_type_map.items()}
-        logger.debug(f"Entity type map: {entity_type_map}\n search_results={search_results}")
+        logger.info(f"[ENTITY EXTRACTION] Final entity_type_map: {entity_type_map}")
+        logger.info(f"[ENTITY EXTRACTION] entity_type_map size: {len(entity_type_map)}")
+        if not entity_type_map:
+            logger.error("[ENTITY EXTRACTION] entity_type_map is EMPTY! No entities were extracted!")
         return entity_type_map
 
     def _establish_nodes_relations_from_data(self, data, filters, entity_type_map):
@@ -303,6 +471,8 @@ class MemoryGraph:
             LIMIT $limit
             """
 
+            logger.info(f"Search Graph Node: {node}")
+
             params = {
                 "n_embedding": n_embedding,
                 "threshold": self.threshold,
@@ -316,6 +486,7 @@ class MemoryGraph:
 
             ans = self.graph.query(cypher_query, params=params)
             result_relations.extend(ans)
+            logger.info(f"Node: {node}, relations: {ans}")
 
         return result_relations
 
