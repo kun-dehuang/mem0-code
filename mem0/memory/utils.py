@@ -1,19 +1,21 @@
 import hashlib
 import re
+from typing import Optional
 
 from mem0.configs.prompts import (
     FACT_RETRIEVAL_PROMPT,
-    USER_MEMORY_EXTRACTION_PROMPT,
+    get_user_memory_extraction_prompt,
     AGENT_MEMORY_EXTRACTION_PROMPT,
 )
 
 
-def get_fact_retrieval_messages(message, is_agent_memory=False):
+def get_fact_retrieval_messages(message, is_agent_memory=False, user_id: Optional[str] = None):
     """Get fact retrieval messages based on the memory type.
     
     Args:
         message: The message content to extract facts from
         is_agent_memory: If True, use agent memory extraction prompt, else use user memory extraction prompt
+        user_id: The current request user_id used to fill subjectless user facts
         
     Returns:
         tuple: (system_prompt, user_prompt)
@@ -21,7 +23,7 @@ def get_fact_retrieval_messages(message, is_agent_memory=False):
     if is_agent_memory:
         return AGENT_MEMORY_EXTRACTION_PROMPT, f"Input:\n{message}"
     else:
-        return USER_MEMORY_EXTRACTION_PROMPT, f"Input:\n{message}"
+        return get_user_memory_extraction_prompt(user_id), f"Input:\n{message}"
 
 
 def get_fact_retrieval_messages_legacy(message):
@@ -205,4 +207,3 @@ def sanitize_relationship_for_cypher(relationship) -> str:
         sanitized = sanitized.replace(old, new)
 
     return re.sub(r"_+", "_", sanitized).strip("_")
-

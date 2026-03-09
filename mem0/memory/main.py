@@ -429,7 +429,11 @@ class Memory(MemoryBase):
             # Determine if this should use agent memory extraction based on agent_id presence
             # and role types in messages
             is_agent_memory = self._should_use_agent_memory_extraction(messages, metadata)
-            system_prompt, user_prompt = get_fact_retrieval_messages(parsed_messages, is_agent_memory)
+            system_prompt, user_prompt = get_fact_retrieval_messages(
+                parsed_messages,
+                is_agent_memory,
+                user_id=metadata.get("user_id"),
+            )
 
         response = self.llm.generate_response(
             messages=[
@@ -1458,7 +1462,11 @@ class AsyncMemory(MemoryBase):
             # Determine if this should use agent memory extraction based on agent_id presence
             # and role types in messages
             is_agent_memory = self._should_use_agent_memory_extraction(messages, metadata)
-            system_prompt, user_prompt = get_fact_retrieval_messages(parsed_messages, is_agent_memory)
+            system_prompt, user_prompt = get_fact_retrieval_messages(
+                parsed_messages,
+                is_agent_memory,
+                user_id=metadata.get("user_id"),
+            )
 
         response = await asyncio.to_thread(
             self.llm.generate_response,

@@ -58,15 +58,18 @@ Following is a conversation between the user and the assistant. You have to extr
 You should detect the language of the user input and record the facts in the same language.
 """
 
-# USER_MEMORY_EXTRACTION_PROMPT - Enhanced version based on platform implementation
-USER_MEMORY_EXTRACTION_PROMPT = f"""You are a "Information Organizer," specialized in accurately storing facts, user memories, and preferences. Your primary role is to extract relevant pieces of information from conversations and organize them into distinct, manageable "Facts" for easy retrieval and personalization.
+def get_user_memory_extraction_prompt(user_id: str | None = None) -> str:
+    effective_user_id = user_id or "current user_id"
+    return f"""You are a "Information Organizer," specialized in accurately storing facts, user memories, and preferences. Your primary role is to extract relevant pieces of information from conversations and organize them into distinct, manageable "Facts" for easy retrieval and personalization.
 
 # Extraction Logic: The "1 + N" Principle (CORE REQUIREMENT)
 To ensure each memory is self-contained and searchable outside its original context, every Fact MUST satisfy the following:
 
-1. 【Core Subject (1)】: Each Fact must contain a clear subject (specific name).
-   - If there is a specific name for the subject, do not use pronouns like "I", "He", "She", "The user".
-   - You must identify the user's name from context (e.g., Ouyang Bingjie) and include it in EVERY fact.
+1. 【Core Subject (1)】: Each Fact must contain a clear subject.
+   - If the sentence already has an explicit subject (for example a specific person name or entity), preserve that subject.
+   - If the sentence has no explicit subject, use "{effective_user_id}" as the subject.
+   - Do not infer a person name from prior context unless that name is explicitly the subject of the current fact.
+   - Do not use vague pronouns like "I", "He", "She", "They", or "The user" in the final fact when a clearer subject is available.
 
 2. 【Relational Elements (N)】: In addition to the subject, each Fact must include at least one of the following:
    - Who: Companions(specific name).
@@ -74,7 +77,7 @@ To ensure each memory is self-contained and searchable outside its original cont
    - Where: Country, city, specific location, or environment.
    - What: Specific actions, purchases, shared opinions, or goals.
    - How: Transportation modes, attire/outfit, or specific emotional/preference states.
-   
+
 # Constraint Rules - Atomicity: Each Fact should describe a single independent event. - Completeness: Each Fact must be a full declarative sentence; fragmented phrases are strictly prohibited. - Objectivity: Do not make subjective inferences; extract only information explicitly stated in the source.
 
 # [IMPORTANT]: GENERATE FACTS SOLELY BASED ON THE USER'S MESSAGES. Inclusion of information from Assistant or System messages is strictly prohibited and will be penalized.
@@ -96,11 +99,17 @@ Output: {{"facts": []}}
 User: My name is Ouyang Bingjie and I am a software engineer.
 Output: {{"facts": ["Ouyang Bingjie is a software engineer by profession"]}}
 
-User: Ouyang Bingjie had a meeting with John in San Francisco at 3pm yesterday to discuss the new project.
-Output: {{"facts": ["Ouyang Bingjie discussed the new project with John in San Francisco at 3pm yesterday"]}}
+User: Likes coffee.
+Output: {{"facts": ["{effective_user_id} likes coffee"]}}
 
-User: My (Ouyang Bingjie) favorite movie is Inception.
-Output: {{"facts": ["Ouyang Bingjie's favorite movie is Inception"]}}
+User: Went to Shanghai yesterday.
+Output: {{"facts": ["{effective_user_id} went to Shanghai yesterday"]}}
+
+User: Looking for a new job.
+Output: {{"facts": ["{effective_user_id} is looking for a new job"]}}
+
+User: John moved to Beijing last month.
+Output: {{"facts": ["John moved to Beijing last month"]}}
 
 # Rules:
 - Today's date is {datetime.now().strftime("%Y-%m-%d")}.
