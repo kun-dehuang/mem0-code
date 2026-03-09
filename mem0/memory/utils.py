@@ -23,7 +23,9 @@ def get_fact_retrieval_messages(message, is_agent_memory=False, user_id: Optiona
     if is_agent_memory:
         return AGENT_MEMORY_EXTRACTION_PROMPT, f"Input:\n{message}"
     else:
-        return get_user_memory_extraction_prompt(user_id), f"Input:\n{message}"
+        effective_user_id = user_id or "current user_id"
+        user_prompt = f"Current request user_id: {effective_user_id}\nInput:\n{message}"
+        return get_user_memory_extraction_prompt(user_id), user_prompt
 
 
 def get_fact_retrieval_messages_legacy(message):

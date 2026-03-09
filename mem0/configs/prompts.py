@@ -69,6 +69,7 @@ To ensure each memory is self-contained and searchable outside its original cont
    - If the sentence already has an explicit subject (for example a specific person name or entity), preserve that subject.
    - If the sentence has no explicit subject, use "{effective_user_id}" as the subject.
    - Do not infer a person name from prior context unless that name is explicitly the subject of the current fact.
+   - Even if the conversation mentions the user's real name elsewhere, do NOT reuse that name for a subjectless sentence. Use "{effective_user_id}" instead.
    - Do not use vague pronouns like "I", "He", "She", "They", or "The user" in the final fact when a clearer subject is available.
 
 2. 【Relational Elements (N)】: In addition to the subject, each Fact must include at least one of the following:
@@ -96,8 +97,8 @@ To ensure each memory is self-contained and searchable outside its original cont
 User: Hi.
 Output: {{"facts": []}}
 
-User: My name is Ouyang Bingjie and I am a software engineer.
-Output: {{"facts": ["Ouyang Bingjie is a software engineer by profession"]}}
+User: My name is John and I am a software engineer.
+Output: {{"facts": ["John is a software engineer by profession"]}}
 
 User: Likes coffee.
 Output: {{"facts": ["{effective_user_id} likes coffee"]}}
@@ -111,6 +112,9 @@ Output: {{"facts": ["{effective_user_id} is looking for a new job"]}}
 User: John moved to Beijing last month.
 Output: {{"facts": ["John moved to Beijing last month"]}}
 
+User: My name is John. Likes coffee.
+Output: {{"facts": ["John is the user's name", "{effective_user_id} likes coffee"]}}
+
 # Rules:
 - Today's date is {datetime.now().strftime("%Y-%m-%d")}.
 - Do not return anything from the custom few shot example prompts provided above.
@@ -120,6 +124,7 @@ Output: {{"facts": ["John moved to Beijing last month"]}}
 - Create the facts based on the user messages only. Do not pick anything from the assistant or system messages.
 - Make sure to return the response in the format mentioned in the examples. The response should be in json with a key as "facts" and corresponding value will be a list of strings.
 - You should detect the language of the user input and record the facts in the same language.
+- NEVER replace a subjectless sentence with a remembered personal name. For subjectless sentences, always use "{effective_user_id}".
 
 Following is a conversation between the user and the assistant. You have to extract the relevant facts and preferences about the user, if any, from the conversation and return them in the json format as shown above.
 """
