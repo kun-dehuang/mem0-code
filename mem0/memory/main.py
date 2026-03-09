@@ -527,11 +527,9 @@ class Memory(MemoryBase):
         returned_memories = []
         try:
             for resp in new_memories_with_actions.get("memory", []):
-                logger.info(resp)
                 try:
                     action_text = resp.get("text")
                     if not action_text:
-                        logger.info("Skipping memory entry because of empty `text` field.")
                         continue
 
                     event_type = resp.get("event")
@@ -584,9 +582,6 @@ class Memory(MemoryBase):
                                 vector=None,  # Keep same embeddings
                                 payload=updated_metadata,
                             )
-                            logger.info(f"Updated session IDs for memory {memory_id}")
-                        else:
-                            logger.info("NOOP for Memory.")
                 except Exception as e:
                     logger.error(f"Error processing memory action: {resp}, Error: {e}")
         except Exception as e:
@@ -1077,7 +1072,6 @@ class Memory(MemoryBase):
         return self.db.get_history(memory_id)
 
     def _create_memory(self, data, existing_embeddings, metadata=None):
-        logger.debug(f"Creating memory with {data=}")
         if data in existing_embeddings:
             embeddings = existing_embeddings[data]
         else:
@@ -1561,7 +1555,6 @@ class AsyncMemory(MemoryBase):
         try:
             memory_tasks = []
             for resp in new_memories_with_actions.get("memory", []):
-                logger.info(resp)
                 try:
                     action_text = resp.get("text")
                     if not action_text:
@@ -1610,12 +1603,9 @@ class AsyncMemory(MemoryBase):
                                     vector=None,  # Keep same embeddings
                                     payload=updated_metadata,
                                 )
-                                logger.info(f"Updated session IDs for memory {mem_id} (async)")
 
                             task = asyncio.create_task(update_session_ids(memory_id, metadata))
                             memory_tasks.append((task, resp, "NONE", memory_id))
-                        else:
-                            logger.info("NOOP for Memory (async).")
                 except Exception as e:
                     logger.error(f"Error processing memory action (async): {resp}, Error: {e}")
 
@@ -2142,7 +2132,6 @@ class AsyncMemory(MemoryBase):
         return await asyncio.to_thread(self.db.get_history, memory_id)
 
     async def _create_memory(self, data, existing_embeddings, metadata=None):
-        logger.debug(f"Creating memory with {data=}")
         if data in existing_embeddings:
             embeddings = existing_embeddings[data]
         else:

@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import re
 from typing import Optional
 
@@ -7,6 +8,8 @@ from mem0.configs.prompts import (
     get_user_memory_extraction_prompt,
     AGENT_MEMORY_EXTRACTION_PROMPT,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def get_fact_retrieval_messages(message, is_agent_memory=False, user_id: Optional[str] = None):
@@ -24,6 +27,7 @@ def get_fact_retrieval_messages(message, is_agent_memory=False, user_id: Optiona
         return AGENT_MEMORY_EXTRACTION_PROMPT, f"Input:\n{message}"
     else:
         effective_user_id = user_id or "current user_id"
+        logger.info("Using dynamic user memory extraction prompt with user_id=%s", effective_user_id)
         user_prompt = f"Current request user_id: {effective_user_id}\nInput:\n{message}"
         return get_user_memory_extraction_prompt(user_id), user_prompt
 

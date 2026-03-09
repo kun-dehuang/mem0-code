@@ -81,13 +81,6 @@ class MemoryGraph:
             data (str): The data to add to the graph.
             filters (dict): A dictionary containing filters to be applied during the addition.
         """
-
-        # 获取与 memory-select 相同的 logger
-        logger = logging.getLogger("memory_debug")
-
-        # 然后就可以写入日志了
-        logger.info("[MEM0 INTERNAL] add")
-
         entity_type_map = self._retrieve_nodes_from_data(data, filters)
         to_be_added = self._establish_nodes_relations_from_data(data, filters, entity_type_map)
         search_output = self._search_graph_db(node_list=list(entity_type_map.keys()), filters=filters)
@@ -114,16 +107,7 @@ class MemoryGraph:
                 - "contexts": List of search results from the base data store.
                 - "entities": List of related graph data based on the query.
         """
-        # 然后就可以写入日志了
-        logger.info("=" * 80)
-        logger.info("[GRAPH SEARCH] Starting graph search")
-        logger.info(f"[GRAPH SEARCH] query: '{query}'")
-        logger.info(f"[GRAPH SEARCH] filters: {filters}")
-        logger.info(f"[GRAPH SEARCH] limit: {limit}")
-
         entity_type_map = self._retrieve_nodes_from_data(query, filters)
-        logger.info(f"[GRAPH SEARCH] Extracted entity_type_map: {entity_type_map}")
-        logger.info(f"[GRAPH SEARCH] entity_type_map keys: {list(entity_type_map.keys())}")
 
         node_list = list(entity_type_map.keys())
         if not node_list:
@@ -132,7 +116,6 @@ class MemoryGraph:
             return []
 
         search_output = self._search_graph_db(node_list=node_list, filters=filters)
-        logger.info(f"[GRAPH SEARCH] _search_graph_db returned {len(search_output)} results")
 
         if not search_output:
             return []
@@ -144,7 +127,6 @@ class MemoryGraph:
 
         tokenized_query = query.split(" ")
         reranked_results = bm25.get_top_n(tokenized_query, search_outputs_sequence, n=5)
-        logger.info(f"Reranked results: {reranked_results}")
 
         search_results = []
         for item in reranked_results:
@@ -220,10 +202,6 @@ class MemoryGraph:
 
     def _retrieve_nodes_from_data(self, data, filters):
         """Extracts all the entities mentioned in the query."""
-        logger.info(f"[ENTITY EXTRACTION] Input data: '{data[:200]}...'")  # Log first 200 chars
-        logger.info(f"[ENTITY EXTRACTION] Filters: {filters}")
-        logger.info(f"[ENTITY EXTRACTION] LLM provider: {self.llm_provider}")
-
         _tools = [EXTRACT_ENTITIES_TOOL]
         nodes_prompt = f'''
 ### Task
@@ -300,16 +278,10 @@ Now extract entities from the text above, using ONLY the 4 allowed types.
             tools=_tools,
         )
 
-        # Debug log: log search_results structure
-        logger.info(f"[ENTITY EXTRACTION] search_results type: {type(search_results)}")
-        logger.info(f"[ENTITY EXTRACTION] search_results keys: {search_results.keys() if isinstance(search_results, dict) else 'N/A'}")
-        logger.info(f"[ENTITY EXTRACTION] search_results content: {search_results}")
-
         entity_type_map = {}
 
         try:
             tool_calls = search_results.get("tool_calls", [])
-            logger.info(f"[ENTITY EXTRACTION] tool_calls count: {len(tool_calls)}")
 
             if not tool_calls:
                 logger.warning("[ENTITY EXTRACTION] No tool_calls in LLM response! This is the problem!")
@@ -372,14 +344,10 @@ Now extract entities from the text above, using ONLY the 4 allowed types.
                         logger.warning(f"[ENTITY EXTRACTION] All parsing methods failed")
 
             for tool_call in tool_calls:
-                logger.info(f"[ENTITY EXTRACTION] tool_call: {tool_call}")
                 if tool_call.get("name") != "extract_entities":
-                    logger.info(f"[ENTITY EXTRACTION] Skipping tool: {tool_call.get('name')}")
                     continue
                 args = tool_call.get("arguments", {})
                 entities = args.get("entities", [])
-                logger.info(f"[ENTITY EXTRACTION] extract_entities arguments: {args}")
-                logger.info(f"[ENTITY EXTRACTION] entities count: {len(entities)}")
                 for item in entities:
                     entity_type_map[item["entity"]] = item["entity_type"]
         except Exception as e:
@@ -388,8 +356,6 @@ Now extract entities from the text above, using ONLY the 4 allowed types.
             )
 
         entity_type_map = {k.lower().replace(" ", "_"): v.lower().replace(" ", "_") for k, v in entity_type_map.items()}
-        logger.info(f"[ENTITY EXTRACTION] Final entity_type_map: {entity_type_map}")
-        logger.info(f"[ENTITY EXTRACTION] entity_type_map size: {len(entity_type_map)}")
         if not entity_type_map:
             logger.error("[ENTITY EXTRACTION] entity_type_map is EMPTY! No entities were extracted!")
         return entity_type_map
@@ -471,8 +437,6 @@ Now extract entities from the text above, using ONLY the 4 allowed types.
             LIMIT $limit
             """
 
-            logger.info(f"Search Graph Node: {node}")
-
             params = {
                 "n_embedding": n_embedding,
                 "threshold": self.threshold,
@@ -486,7 +450,6 @@ Now extract entities from the text above, using ONLY the 4 allowed types.
 
             ans = self.graph.query(cypher_query, params=params)
             result_relations.extend(ans)
-            logger.info(f"Node: {node}, relations: {ans}")
 
         return result_relations
 
