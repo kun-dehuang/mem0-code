@@ -1,0 +1,239 @@
+---
+title: "Repository Architecture"
+description: "How the mem0 monorepo is split across core libraries, self-hosted services, and product surfaces."
+icon: "sitemap"
+---
+
+# Repository Architecture
+
+This repository is a monorepo with multiple deployable surfaces. It is not a single backend service.
+
+At a high level, the codebase is organized into three layers:
+
+1. **Core capability layer**: the `mem0` Python package, which implements memory extraction, semantic retrieval, optional graph memory, and history storage.
+2. **Service layer**: two independent FastAPI services.
+   - `server/`: generic Mem0 REST API for developers and self-hosted integrations
+   - `openmemory/api/`: OpenMemory product backend, which serves both REST APIs and MCP over SSE
+3. **Access layer**: UI, SDKs, and adapters.
+   - `openmemory/ui/`: Next.js dashboard
+   - `mem0-ts/`: TypeScript SDK
+   - `vercel-ai-sdk/`, `openclaw/`: ecosystem adapters
+
+## Architecture at a glance
+
+```text
+mem0-code/
+├── mem0/                  # Python memory engine
+├── server/                # Generic REST API service
+├── openmemory/
+│   ├── api/               # OpenMemory REST API + MCP service
+│   └── ui/                # OpenMemory Next.js frontend
+├── mem0-ts/               # TypeScript SDK
+├── vercel-ai-sdk/         # Vercel AI SDK provider
+├── openclaw/              # OpenClaw adapter
+└── examples/, docs/, evaluation/, embedchain/
+```
+
+## Runtime topology
+
+### OpenMemory product stack
+
+```text
+Browser
+  -> openmemory/ui (Next.js)
+  -> openmemory/api (FastAPI)
+     -> mem0.Memory
+     -> Vector store (Qdrant by default)
+     -> SQLAlchemy business database (SQLite by default)
+```
+
+Key properties:
+
+- The UI talks directly to `openmemory/api` through `NEXT_PUBLIC_API_URL`.
+- `openmemory/api` is a single FastAPI process that mounts both REST routes and MCP SSE endpoints.
+- The API stores product metadata in its own database: users, apps, memories, categories, configs, access logs, and state history.
+- Semantic memory operations are delegated to `mem0.Memory`, which persists the searchable memory content in a vector store.
+- Default local deployment uses `openmemory/docker-compose.yml` with:
+  - `openmemory-ui`
+  - `openmemory-mcp`
+  - `mem0_store` (Qdrant)
+
+### Generic REST API stack
+
+```text
+Client
+  -> server (FastAPI)
+     -> mem0.Memory
+     -> pgvector (Postgres)
+     -> Neo4j
+     -> local history SQLite
+```
+
+Key properties:
+
+- `server/main.py` is a thin wrapper around the `mem0` Python package.
+- It exposes generic REST endpoints such as `/memories`, `/search`, `/configure`, and `/reset`.
+- Its default local environment is defined in `server/docker-compose.yaml` and brings up:
+  - the API service
+  - Postgres with pgvector
+  - Neo4j
+- In development, the service mounts the local `mem0/` package directly, so it is tightly coupled to the core Python implementation.
+
+## Component responsibilities
+
+### `mem0/` core engine
+
+The Python package is the capability center of the repo.
+
+- `mem0.memory.main.Memory` is the main orchestration entrypoint.
+- It wires together:
+  - embedder
+  - vector store
+  - LLM
+  - optional graph store
+  - SQLite-backed history manager
+- Providers are selected through factory abstractions, so the core engine is designed to support multiple LLM and vector store backends rather than a single infrastructure choice.
+
+The repo also includes a separate hosted-platform client:
+
+- `mem0.client.main.MemoryClient` targets `https://api.mem0.ai`
+- This is distinct from the self-hosted runtime paths in `server/` and `openmemory/`
+
+### `openmemory/api/` product backend
+
+`openmemory/api` is more than a thin proxy. It combines product metadata management with memory-system orchestration.
+
+- REST routers:
+  - `/api/v1/memories`
+  - `/api/v1/apps`
+  - `/api/v1/stats`
+  - `/api/v1/config`
+  - `/api/v1/backup`
+- MCP surface:
+  - `/mcp/<client-name>/sse/<user-id>`
+  - related message transport endpoints
+- Business models include:
+  - `users`
+  - `apps`
+  - `memories`
+  - `categories`
+  - `configs`
+  - `memory_access_logs`
+  - `memory_status_history`
+
+This creates a dual-storage design:
+
+| Concern | Backing store |
+| --- | --- |
+| Searchable semantic memory | `mem0` + vector store |
+| Product metadata and control plane | SQLAlchemy database |
+
+Configuration is part of the control plane:
+
+- `openmemory/api/app/routers/config.py` persists provider configuration in the database.
+- `openmemory/api/app/utils/memory.py` lazily rebuilds the `mem0` client when configuration changes.
+- Default vector store is Qdrant, but the service can switch to other providers through environment variables or persisted config.
+
+### `openmemory/ui/` dashboard
+
+The UI is a separate Next.js application, not a backend-for-frontend layer.
+
+- It fetches data directly from `openmemory/api`.
+- It manages memories, apps, stats, and configuration from the browser.
+- There is no additional service tier between the browser and the OpenMemory API.
+
+### TypeScript and ecosystem packages
+
+These packages are integration surfaces rather than core runtime services:
+
+- `mem0-ts/`: TypeScript SDK
+- `vercel-ai-sdk/`: provider integration for the Vercel AI SDK
+- `openclaw/`: adapter package for OpenClaw
+
+They depend on the same Mem0 concepts, but they are not required to run either `server/` or `openmemory/`.
+
+## Public interfaces
+
+### `server`
+
+- REST:
+  - `/memories`
+  - `/memories/{memory_id}`
+  - `/search`
+  - `/configure`
+  - `/reset`
+
+### `openmemory/api`
+
+- REST:
+  - `/api/v1/memories/*`
+  - `/api/v1/apps/*`
+  - `/api/v1/stats`
+  - `/api/v1/config*`
+  - `/api/v1/backup/*`
+- MCP / SSE:
+  - `/mcp/<client-name>/sse/<user-id>`
+  - message transport endpoints mounted by the MCP server
+
+### Access layer
+
+- `openmemory/ui` depends on:
+  - `NEXT_PUBLIC_API_URL`
+  - `NEXT_PUBLIC_USER_ID`
+- `openmemory/api` uses `USER` to provision the default local user/app context
+- SDK surfaces include:
+  - Python: `Memory`, `AsyncMemory`, `MemoryClient`
+  - TypeScript: `mem0-ts`
+
+## Important runtime flows
+
+### OpenMemory write path
+
+1. The UI or an MCP client sends a memory creation request to `openmemory/api`.
+2. The API resolves the user and app context in its SQLAlchemy database.
+3. The API initializes or reuses `mem0.Memory`.
+4. `mem0` writes semantic memory data into the configured vector store.
+5. The API mirrors the resulting memory ID and metadata into its business database.
+
+### OpenMemory read path
+
+1. A UI or MCP request triggers a search.
+2. `mem0` performs embedding + vector search.
+3. `openmemory/api` filters or enriches results with app, category, and permission metadata.
+4. The API records memory access logs in the business database.
+
+### Configuration update path
+
+1. The UI updates provider settings through `/api/v1/config`.
+2. `openmemory/api` stores the config in the database.
+3. The service resets the cached memory client.
+4. The next memory operation rebuilds `mem0.Memory` from the new configuration.
+
+## What is not part of the main runtime
+
+The following directories are important, but they are not part of the primary service topology described above:
+
+- `examples/`
+- `evaluation/`
+- `embedchain/`
+- `docs/`
+
+Treat them as examples, experiments, documentation, or adjacent tooling rather than core runtime services.
+
+## Validation checklist
+
+Use these checks when verifying the current architecture locally:
+
+- `server/docker-compose.yaml` starts only the generic API stack and does not depend on `openmemory/`
+- `openmemory/docker-compose.yml` starts only the OpenMemory stack and does not depend on `server/`
+- OpenMemory writes memory content through `mem0` into a vector store and stores product metadata in its SQLAlchemy database
+- OpenMemory searches flow through vector retrieval first, then back through metadata filtering and access logging
+- UI hooks in `openmemory/ui` call REST endpoints directly rather than using a separate BFF
+- MCP and REST in `openmemory/api` share the same FastAPI process and memory-client initialization path
+
+## Related docs
+
+- [Mem0 OSS Overview](/open-source/overview)
+- [REST API](/open-source/features/rest-api)
+- [OpenMemory Overview](/openmemory/overview)
+- [OpenMemory Quickstart](/openmemory/quickstart)

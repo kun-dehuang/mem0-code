@@ -47,4 +47,31 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
       historyDbPath: "memory.db",
     },
   },
+  prompting: {
+    sourceLoader: "file",
+    sourceConfig: {},
+    autoReload: true,
+    overrides: {},
+  },
+  graphPipeline: {
+    entityExtractor: "default",
+    relationMapper: "default",
+    entityResolver: "semantic_similarity",
+    mutationPlanner: "default",
+    writer: "default",
+  },
+  observability: {
+    enableLoggerSink: true,
+    enableInMemorySink: false,
+    enableDurableSink: false,
+    sinks: [],
+    sinkConfigs: {},
+  },
+  consistency: {
+    mode: "recoverable_commit",
+  },
+  stateStore: {
+    path: "memory.db",
+  },
+  providerRouting: {},
 };

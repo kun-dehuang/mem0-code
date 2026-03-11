@@ -60,6 +60,46 @@ export interface GraphStoreConfig {
   customPrompt?: string;
 }
 
+export interface PromptingConfig {
+  sourceLoader?: string;
+  sourcePath?: string;
+  sourceFormat?: string;
+  sourceConfig?: Record<string, any>;
+  autoReload?: boolean;
+  overrides?: Record<string, string>;
+}
+
+export interface GraphPipelineConfig {
+  entityExtractor?: string;
+  relationMapper?: string;
+  entityResolver?: string;
+  mutationPlanner?: string;
+  writer?: string;
+}
+
+export interface ObservabilityConfig {
+  enableLoggerSink?: boolean;
+  enableInMemorySink?: boolean;
+  enableDurableSink?: boolean;
+  sinks?: string[];
+  sinkConfigs?: Record<string, Record<string, any>>;
+}
+
+export interface ConsistencyConfig {
+  mode?: string;
+}
+
+export interface StateStoreConfig {
+  path?: string;
+}
+
+export interface ProviderRoutingConfig {
+  semanticFactExtraction?: LLMConfig;
+  graphEntityExtraction?: LLMConfig;
+  graphRelationCalibration?: LLMConfig;
+  summaryUpdateMemory?: LLMConfig;
+}
+
 export interface MemoryConfig {
   version?: string;
   embedder: {
@@ -80,6 +120,12 @@ export interface MemoryConfig {
   customPrompt?: string;
   graphStore?: GraphStoreConfig;
   enableGraph?: boolean;
+  prompting?: PromptingConfig;
+  graphPipeline?: GraphPipelineConfig;
+  observability?: ObservabilityConfig;
+  consistency?: ConsistencyConfig;
+  stateStore?: StateStoreConfig;
+  providerRouting?: ProviderRoutingConfig;
 }
 
 export interface MemoryItem {
@@ -169,4 +215,58 @@ export const MemoryConfigSchema = z.object({
     })
     .optional(),
   disableHistory: z.boolean().optional(),
+  prompting: z
+    .object({
+      sourceLoader: z.string().optional(),
+      sourcePath: z.string().optional(),
+      sourceFormat: z.string().optional(),
+      sourceConfig: z.record(z.string(), z.any()).optional(),
+      autoReload: z.boolean().optional(),
+      overrides: z.record(z.string(), z.string()).optional(),
+    })
+    .optional(),
+  graphPipeline: z
+    .object({
+      entityExtractor: z.string().optional(),
+      relationMapper: z.string().optional(),
+      entityResolver: z.string().optional(),
+      mutationPlanner: z.string().optional(),
+      writer: z.string().optional(),
+    })
+    .optional(),
+  observability: z
+    .object({
+      enableLoggerSink: z.boolean().optional(),
+      enableInMemorySink: z.boolean().optional(),
+      enableDurableSink: z.boolean().optional(),
+      sinks: z.array(z.string()).optional(),
+      sinkConfigs: z.record(z.string(), z.record(z.string(), z.any())).optional(),
+    })
+    .optional(),
+  consistency: z
+    .object({
+      mode: z.string().optional(),
+    })
+    .optional(),
+  stateStore: z
+    .object({
+      path: z.string().optional(),
+    })
+    .optional(),
+  providerRouting: z
+    .object({
+      semanticFactExtraction: z
+        .object({ provider: z.string().optional(), config: z.record(z.string(), z.any()).optional() })
+        .optional(),
+      graphEntityExtraction: z
+        .object({ provider: z.string().optional(), config: z.record(z.string(), z.any()).optional() })
+        .optional(),
+      graphRelationCalibration: z
+        .object({ provider: z.string().optional(), config: z.record(z.string(), z.any()).optional() })
+        .optional(),
+      summaryUpdateMemory: z
+        .object({ provider: z.string().optional(), config: z.record(z.string(), z.any()).optional() })
+        .optional(),
+    })
+    .optional(),
 });

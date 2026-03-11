@@ -106,8 +106,44 @@ export class ConfigManager {
         ...userConfig.historyStore,
       },
       disableHistory:
-        userConfig.disableHistory || DEFAULT_MEMORY_CONFIG.disableHistory,
-      enableGraph: userConfig.enableGraph || DEFAULT_MEMORY_CONFIG.enableGraph,
+        userConfig.disableHistory ?? DEFAULT_MEMORY_CONFIG.disableHistory,
+      enableGraph: userConfig.enableGraph ?? DEFAULT_MEMORY_CONFIG.enableGraph,
+      prompting: {
+        ...DEFAULT_MEMORY_CONFIG.prompting,
+        ...userConfig.prompting,
+        sourceConfig: {
+          ...(DEFAULT_MEMORY_CONFIG.prompting?.sourceConfig || {}),
+          ...(userConfig.prompting?.sourceConfig || {}),
+        },
+        overrides: {
+          ...(DEFAULT_MEMORY_CONFIG.prompting?.overrides || {}),
+          ...(userConfig.prompting?.overrides || {}),
+        },
+      },
+      graphPipeline: {
+        ...DEFAULT_MEMORY_CONFIG.graphPipeline,
+        ...userConfig.graphPipeline,
+      },
+      observability: {
+        ...DEFAULT_MEMORY_CONFIG.observability,
+        ...userConfig.observability,
+        sinkConfigs: {
+          ...(DEFAULT_MEMORY_CONFIG.observability?.sinkConfigs || {}),
+          ...(userConfig.observability?.sinkConfigs || {}),
+        },
+      },
+      consistency: {
+        ...DEFAULT_MEMORY_CONFIG.consistency,
+        ...userConfig.consistency,
+      },
+      stateStore: {
+        ...DEFAULT_MEMORY_CONFIG.stateStore,
+        ...userConfig.stateStore,
+      },
+      providerRouting: {
+        ...DEFAULT_MEMORY_CONFIG.providerRouting,
+        ...userConfig.providerRouting,
+      },
     };
 
     // Validate the merged config

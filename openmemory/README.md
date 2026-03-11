@@ -112,6 +112,11 @@ Replace `<client-name>` with the desired client name and `<user-id>` with the va
 - `api/` - Backend APIs + MCP server
 - `ui/` - Frontend React application
 
+## Architecture
+
+- Repository-wide architecture: [../docs/open-source/repository-architecture.mdx](../docs/open-source/repository-architecture.mdx)
+- OpenMemory overview: [https://docs.mem0.ai/openmemory/overview](https://docs.mem0.ai/openmemory/overview)
+
 ## Contributing
 
 We are a team of developers passionate about the future of AI and open-source software. With years of experience in both fields, we believe in the power of community-driven development and are excited to build tools that make AI more accessible and personalized.

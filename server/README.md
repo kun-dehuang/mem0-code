@@ -15,3 +15,7 @@ Mem0 provides a REST API server (written using FastAPI). Users can perform all o
 ## Running the server
 
 Follow the instructions in the [docs](https://docs.mem0.ai/open-source/features/rest-api) to run the server.
+
+## Architecture
+
+For the repo-level runtime layout and how `server/` relates to `mem0/` and `openmemory/`, see [../docs/open-source/repository-architecture.mdx](../docs/open-source/repository-architecture.mdx).

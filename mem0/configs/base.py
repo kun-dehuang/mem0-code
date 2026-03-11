@@ -27,6 +27,49 @@ class MemoryItem(BaseModel):
     updated_at: Optional[str] = Field(None, description="The timestamp when the memory was updated")
 
 
+class PromptingConfig(BaseModel):
+    source_loader: Optional[str] = Field(default=None, description="Named or importable prompt source loader")
+    source_path: Optional[str] = Field(default=None, description="Path to external prompt JSON/YAML file")
+    source_format: Optional[str] = Field(default=None, description="Prompt file format override")
+    source_config: Dict[str, Any] = Field(default_factory=dict, description="Additional prompt source configuration")
+    auto_reload: bool = Field(default=True, description="Reload prompt snapshot before each pipeline run")
+    overrides: Dict[str, str] = Field(default_factory=dict, description="Inline prompt template overrides")
+
+
+class GraphPipelineConfig(BaseModel):
+    entity_extractor: str = Field(default="default", description="Graph entity extractor plugin")
+    relation_mapper: str = Field(default="default", description="Graph relation mapper plugin")
+    entity_resolver: str = Field(default="semantic_similarity", description="Graph entity resolver plugin")
+    mutation_planner: str = Field(default="default", description="Graph mutation planner plugin")
+    writer: str = Field(default="default", description="Graph writer plugin")
+
+
+class ObservabilityConfig(BaseModel):
+    enable_logger_sink: bool = Field(default=True, description="Emit stage events to logger")
+    enable_in_memory_sink: bool = Field(default=False, description="Keep stage events in memory")
+    enable_durable_sink: bool = Field(default=False, description="Persist stage events to state store")
+    sinks: list[str] = Field(default_factory=list, description="Additional named or importable observer sinks")
+    sink_configs: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Observer sink configuration keyed by sink name",
+    )
+
+
+class ConsistencyConfig(BaseModel):
+    mode: str = Field(default="recoverable_commit", description="Consistency mode for vector/graph pipeline")
+
+
+class StateStoreConfig(BaseModel):
+    path: Optional[str] = Field(default=None, description="Path to pipeline journal store")
+
+
+class ProviderRoutingConfig(BaseModel):
+    semantic_fact_extraction: Optional[LlmConfig] = Field(default=None)
+    graph_entity_extraction: Optional[LlmConfig] = Field(default=None)
+    graph_relation_calibration: Optional[LlmConfig] = Field(default=None)
+    summary_update_memory: Optional[LlmConfig] = Field(default=None)
+
+
 class MemoryConfig(BaseModel):
     vector_store: VectorStoreConfig = Field(
         description="Configuration for the vector store",
@@ -63,6 +106,30 @@ class MemoryConfig(BaseModel):
     custom_update_memory_prompt: Optional[str] = Field(
         description="Custom prompt for the update memory",
         default=None,
+    )
+    prompting: PromptingConfig = Field(
+        description="Prompt source and override configuration",
+        default_factory=PromptingConfig,
+    )
+    graph_pipeline: GraphPipelineConfig = Field(
+        description="Graph pipeline plugin configuration",
+        default_factory=GraphPipelineConfig,
+    )
+    observability: ObservabilityConfig = Field(
+        description="Pipeline observability configuration",
+        default_factory=ObservabilityConfig,
+    )
+    consistency: ConsistencyConfig = Field(
+        description="Vector/graph consistency configuration",
+        default_factory=ConsistencyConfig,
+    )
+    state_store: StateStoreConfig = Field(
+        description="Durable state store configuration",
+        default_factory=StateStoreConfig,
+    )
+    provider_routing: ProviderRoutingConfig = Field(
+        description="Stage-specific provider routing",
+        default_factory=ProviderRoutingConfig,
     )
 
 

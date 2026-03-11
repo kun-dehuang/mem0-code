@@ -22,7 +22,6 @@ def memory_instance():
         patch("mem0.memory.main.VectorStoreFactory") as mock_vector_store,
         patch("mem0.utils.factory.LlmFactory") as mock_llm,
         patch("mem0.memory.telemetry.capture_event"),
-        patch("mem0.memory.graph_memory.MemoryGraph"),
         patch("mem0.memory.main.GraphStoreFactory") as mock_graph_store,
     ):
         mock_embedder.create.return_value = Mock()
@@ -46,7 +45,6 @@ def memory_custom_instance():
         patch("mem0.memory.main.VectorStoreFactory") as mock_vector_store,
         patch("mem0.utils.factory.LlmFactory") as mock_llm,
         patch("mem0.memory.telemetry.capture_event"),
-        patch("mem0.memory.graph_memory.MemoryGraph"),
         patch("mem0.memory.main.GraphStoreFactory") as mock_graph_store,
     ):
         mock_embedder.create.return_value = Mock()
@@ -85,14 +83,20 @@ def test_add(memory_instance, version, enable_graph):
         assert "results" in result
         assert result["results"] == [{"memory": "Test memory", "event": "ADD"}]
 
-    memory_instance._add_to_vector_store.assert_called_once_with(
-        [{"role": "user", "content": "Test message"}], {"user_id": "test_user"}, {"user_id": "test_user"}, True
-    )
+    memory_instance._add_to_vector_store.assert_called_once()
+    call_args = memory_instance._add_to_vector_store.call_args[0]
+    assert call_args[0] == [{"role": "user", "content": "Test message"}]
+    assert call_args[1]["user_id"] == "test_user"
+    assert "job_id" in call_args[1]
+    assert call_args[2] == {"user_id": "test_user"}
+    assert call_args[3] is True
 
-    # Remove the conditional assertion for _add_to_graph
-    memory_instance._add_to_graph.assert_called_once_with(
-        [{"role": "user", "content": "Test message"}], {"user_id": "test_user"}
-    )
+    if enable_graph:
+        memory_instance._add_to_graph.assert_called_once_with(
+            [{"role": "user", "content": "Test message"}], {"user_id": "test_user"}
+        )
+    else:
+        memory_instance._add_to_graph.assert_not_called()
 
 
 def test_get(memory_instance):

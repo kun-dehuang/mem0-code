@@ -25,6 +25,12 @@ from mem0.memory.base import MemoryBase
 from mem0.memory.setup import mem0_dir, setup_config
 from mem0.memory.storage import SQLiteManager
 from mem0.memory.telemetry import capture_event
+from mem0.orchestration import AsyncMemoryRuntime, MemoryRuntime, build_pipeline_observer
+from mem0.orchestration.graph_plugins import DEFAULT_GRAPH_PLUGIN_REGISTRY
+from mem0.orchestration.observer import DEFAULT_PIPELINE_OBSERVER_REGISTRY
+from mem0.prompting import PromptRegistry
+from mem0.prompting.sources import DEFAULT_PROMPT_SOURCE_REGISTRY
+from mem0.storage import SQLitePipelineStateStore
 from mem0.memory.utils import (
     extract_json,
     get_fact_retrieval_messages,
@@ -165,11 +171,65 @@ def _build_filters_and_metadata(
     return base_metadata_template, effective_query_filters
 
 
+def _state_store_path(config: MemoryConfig) -> str:
+    return config.state_store.path or config.history_db_path
+
+
+def _build_prompt_registry(config: MemoryConfig) -> PromptRegistry:
+    overrides = dict(config.prompting.overrides)
+    if config.custom_fact_extraction_prompt:
+        overrides["semantic.user_fact.system"] = config.custom_fact_extraction_prompt
+    if config.custom_update_memory_prompt:
+        overrides["semantic.update_memory.prefix"] = config.custom_update_memory_prompt
+    prompting_config = config.prompting.model_copy(update={"overrides": overrides})
+    return PromptRegistry.from_config(prompting_config)
+
+
+def _resolve_stage_llm(instance, stage_name: str, default_llm):
+    provider_routing = getattr(instance.config, "provider_routing", None)
+    if provider_routing is None:
+        return default_llm, instance.config.llm.provider
+
+    route = getattr(provider_routing, stage_name, None)
+    if route is None:
+        return default_llm, instance.config.llm.provider
+
+    return instance._create_llm(route.provider, route.config), route.provider
+
+
 setup_config()
 logger = logging.getLogger(__name__)
 
 
 class Memory(MemoryBase):
+    @classmethod
+    def register_graph_entity_extractor(cls, name: str, plugin_cls) -> None:
+        DEFAULT_GRAPH_PLUGIN_REGISTRY.register_entity_extractor(name, plugin_cls)
+
+    @classmethod
+    def register_graph_relation_mapper(cls, name: str, plugin_cls) -> None:
+        DEFAULT_GRAPH_PLUGIN_REGISTRY.register_relation_mapper(name, plugin_cls)
+
+    @classmethod
+    def register_graph_entity_resolver(cls, name: str, plugin_cls) -> None:
+        DEFAULT_GRAPH_PLUGIN_REGISTRY.register_entity_resolver(name, plugin_cls)
+
+    @classmethod
+    def register_graph_mutation_planner(cls, name: str, plugin_cls) -> None:
+        DEFAULT_GRAPH_PLUGIN_REGISTRY.register_mutation_planner(name, plugin_cls)
+
+    @classmethod
+    def register_graph_writer(cls, name: str, plugin_cls) -> None:
+        DEFAULT_GRAPH_PLUGIN_REGISTRY.register_writer(name, plugin_cls)
+
+    @classmethod
+    def register_prompt_source_loader(cls, name: str, builder) -> None:
+        DEFAULT_PROMPT_SOURCE_REGISTRY.register(name, builder)
+
+    @classmethod
+    def register_pipeline_observer(cls, name: str, builder) -> None:
+        DEFAULT_PIPELINE_OBSERVER_REGISTRY.register(name, builder)
+
     def __init__(self, config: MemoryConfig = MemoryConfig()):
         self.config = config
 
@@ -230,7 +290,19 @@ class Memory(MemoryBase):
         self._telemetry_vector_store = VectorStoreFactory.create(
             self.config.vector_store.provider, telemetry_config
         )
+        self._prompt_registry = _build_prompt_registry(self.config)
+        self._pipeline_state = SQLitePipelineStateStore(_state_store_path(self.config))
+        self._pipeline_observer = build_pipeline_observer(self.config, self._pipeline_state)
+        self._runtime = MemoryRuntime(
+            memory=self,
+            state_store=self._pipeline_state,
+            prompt_registry=self._prompt_registry,
+            observer=self._pipeline_observer,
+        )
         capture_event("mem0.init", self, {"sync_type": "sync"})
+
+    def _create_llm(self, provider_name: str, config: Optional[Dict[str, Any]] = None):
+        return LlmFactory.create(provider_name, config or {})
 
     @classmethod
     def from_config(cls, config_dict: Dict[str, Any]):
@@ -366,24 +438,11 @@ class Memory(MemoryBase):
         else:
             messages = parse_vision_messages(messages)
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future1 = executor.submit(self._add_to_vector_store, messages, processed_metadata, effective_filters, infer)
-            future2 = executor.submit(self._add_to_graph, messages, effective_filters)
-
-            concurrent.futures.wait([future1, future2])
-
-            vector_store_result = future1.result()
-            graph_result = future2.result()
-
-        if self.enable_graph:
-            return {
-                "results": vector_store_result,
-                "relations": graph_result,
-            }
-
-        return {"results": vector_store_result}
+        return self._runtime.add(messages, processed_metadata, effective_filters, infer)
 
     def _add_to_vector_store(self, messages, metadata, filters, infer):
+        prompt_snapshot = self._prompt_registry.snapshot()
+        job_id = metadata.get("job_id", "unknown")
         if not infer:
             returned_memories = []
             for message_dict in messages:
@@ -418,29 +477,60 @@ class Memory(MemoryBase):
                         "role": message_dict["role"],
                     }
                 )
+            self._pipeline_observer.emit(
+                job_id,
+                "VectorMutationPlanningStage",
+                "raw_output",
+                {"vector_write_payload": returned_memories, "prompt_version": prompt_snapshot.version},
+            )
             return returned_memories
 
         parsed_messages = parse_messages(messages)
 
+        is_agent_memory = self._should_use_agent_memory_extraction(messages, metadata)
+        fact_llm, fact_provider = _resolve_stage_llm(self, "semantic_fact_extraction", self.llm)
+        prompt_context = {
+            "user_id": metadata.get("user_id") or "current user_id",
+            "parsed_messages": parsed_messages,
+            "job_id": metadata.get("job_id", ""),
+            "analysis_batch_id": metadata.get("analysis_batch_id", ""),
+            "provider": fact_provider,
+            "pipeline_version": "mem0_modular_v1",
+            "metadata": metadata,
+        }
         if self.config.custom_fact_extraction_prompt:
             system_prompt = self.config.custom_fact_extraction_prompt
             user_prompt = f"Input:\n{parsed_messages}"
+        elif is_agent_memory:
+            system_prompt = self._prompt_registry.render("semantic.agent_fact.system", prompt_context)
+            user_prompt = self._prompt_registry.render("semantic.agent_fact.user", prompt_context)
         else:
-            # Determine if this should use agent memory extraction based on agent_id presence
-            # and role types in messages
-            is_agent_memory = self._should_use_agent_memory_extraction(messages, metadata)
-            system_prompt, user_prompt = get_fact_retrieval_messages(
-                parsed_messages,
-                is_agent_memory,
-                user_id=metadata.get("user_id"),
-            )
+            system_prompt = self._prompt_registry.render("semantic.user_fact.system", prompt_context)
+            user_prompt = self._prompt_registry.render("semantic.user_fact.user", prompt_context)
 
-        response = self.llm.generate_response(
+        self._pipeline_observer.emit(
+            job_id,
+            "SemanticFactExtractionStage",
+            "rendered_prompt",
+            {
+                "prompt_key": "semantic.agent_fact.system" if is_agent_memory else "semantic.user_fact.system",
+                "prompt_version": prompt_snapshot.version,
+                "provider_name": fact_provider,
+                "rendered_prompt": system_prompt,
+            },
+        )
+        response = fact_llm.generate_response(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             response_format={"type": "json_object"},
+        )
+        self._pipeline_observer.emit(
+            job_id,
+            "SemanticFactExtractionStage",
+            "raw_output",
+            {"provider_name": fact_provider, "raw_output": response},
         )
 
         try:
@@ -458,6 +548,12 @@ class Memory(MemoryBase):
         except Exception as e:
             logger.error(f"Error in new_retrieved_facts: {e}")
             new_retrieved_facts = []
+        self._pipeline_observer.emit(
+            job_id,
+            "SemanticFactExtractionStage",
+            "completed",
+            {"facts": new_retrieved_facts, "provider_name": fact_provider},
+        )
 
         if not new_retrieved_facts:
             logger.debug("No new facts retrieved from input. Skipping memory update LLM call.")
@@ -498,18 +594,39 @@ class Memory(MemoryBase):
             retrieved_old_memory[idx]["id"] = str(idx)
 
         if new_retrieved_facts:
+            update_prefix = self.config.custom_update_memory_prompt or self._prompt_registry.get_template(
+                "semantic.update_memory.prefix"
+            )
             function_calling_prompt = get_update_memory_messages(
-                retrieved_old_memory, new_retrieved_facts, self.config.custom_update_memory_prompt
+                retrieved_old_memory, new_retrieved_facts, update_prefix
+            )
+            update_llm, update_provider = _resolve_stage_llm(self, "summary_update_memory", self.llm)
+            self._pipeline_observer.emit(
+                job_id,
+                "VectorMutationPlanningStage",
+                "rendered_prompt",
+                {
+                    "prompt_key": "semantic.update_memory.prefix",
+                    "prompt_version": prompt_snapshot.version,
+                    "provider_name": update_provider,
+                    "rendered_prompt": function_calling_prompt,
+                },
             )
 
             try:
-                response: str = self.llm.generate_response(
+                response: str = update_llm.generate_response(
                     messages=[{"role": "user", "content": function_calling_prompt}],
                     response_format={"type": "json_object"},
                 )
             except Exception as e:
                 logger.error(f"Error in new memory actions response: {e}")
                 response = ""
+            self._pipeline_observer.emit(
+                job_id,
+                "VectorMutationPlanningStage",
+                "raw_output",
+                {"provider_name": update_provider, "raw_output": response},
+            )
 
             try:
                 if not response or not response.strip():
@@ -592,6 +709,12 @@ class Memory(MemoryBase):
             "mem0.add",
             self,
             {"version": self.api_version, "keys": keys, "encoded_ids": encoded_ids, "sync_type": "sync"},
+        )
+        self._pipeline_observer.emit(
+            job_id,
+            "VectorMutationPlanningStage",
+            "completed",
+            {"vector_write_payload": returned_memories, "prompt_version": prompt_snapshot.version},
         )
         return returned_memories
 
@@ -1237,6 +1360,34 @@ class Memory(MemoryBase):
 
 
 class AsyncMemory(MemoryBase):
+    @classmethod
+    def register_graph_entity_extractor(cls, name: str, plugin_cls) -> None:
+        Memory.register_graph_entity_extractor(name, plugin_cls)
+
+    @classmethod
+    def register_graph_relation_mapper(cls, name: str, plugin_cls) -> None:
+        Memory.register_graph_relation_mapper(name, plugin_cls)
+
+    @classmethod
+    def register_graph_entity_resolver(cls, name: str, plugin_cls) -> None:
+        Memory.register_graph_entity_resolver(name, plugin_cls)
+
+    @classmethod
+    def register_graph_mutation_planner(cls, name: str, plugin_cls) -> None:
+        Memory.register_graph_mutation_planner(name, plugin_cls)
+
+    @classmethod
+    def register_graph_writer(cls, name: str, plugin_cls) -> None:
+        Memory.register_graph_writer(name, plugin_cls)
+
+    @classmethod
+    def register_prompt_source_loader(cls, name: str, builder) -> None:
+        Memory.register_prompt_source_loader(name, builder)
+
+    @classmethod
+    def register_pipeline_observer(cls, name: str, builder) -> None:
+        Memory.register_pipeline_observer(name, builder)
+
     def __init__(self, config: MemoryConfig = MemoryConfig()):
         self.config = config
 
@@ -1277,8 +1428,20 @@ class AsyncMemory(MemoryBase):
             telemetry_config.path = os.path.join(mem0_dir, provider_path)
             os.makedirs(telemetry_config.path, exist_ok=True)
         self._telemetry_vector_store = VectorStoreFactory.create(self.config.vector_store.provider, telemetry_config)
+        self._prompt_registry = _build_prompt_registry(self.config)
+        self._pipeline_state = SQLitePipelineStateStore(_state_store_path(self.config))
+        self._pipeline_observer = build_pipeline_observer(self.config, self._pipeline_state)
+        self._runtime = AsyncMemoryRuntime(
+            memory=self,
+            state_store=self._pipeline_state,
+            prompt_registry=self._prompt_registry,
+            observer=self._pipeline_observer,
+        )
 
         capture_event("mem0.init", self, {"sync_type": "async"})
+
+    def _create_llm(self, provider_name: str, config: Optional[Dict[str, Any]] = None):
+        return LlmFactory.create(provider_name, config or {})
 
     @classmethod
     async def from_config(cls, config_dict: Dict[str, Any]):
@@ -1390,20 +1553,7 @@ class AsyncMemory(MemoryBase):
         else:
             messages = parse_vision_messages(messages)
 
-        vector_store_task = asyncio.create_task(
-            self._add_to_vector_store(messages, processed_metadata, effective_filters, infer)
-        )
-        graph_task = asyncio.create_task(self._add_to_graph(messages, effective_filters))
-
-        vector_store_result, graph_result = await asyncio.gather(vector_store_task, graph_task)
-
-        if self.enable_graph:
-            return {
-                "results": vector_store_result,
-                "relations": graph_result,
-            }
-
-        return {"results": vector_store_result}
+        return await self._runtime.add(messages, processed_metadata, effective_filters, infer)
 
     async def _add_to_vector_store(
         self,
@@ -1412,6 +1562,8 @@ class AsyncMemory(MemoryBase):
         effective_filters: dict,
         infer: bool,
     ):
+        prompt_snapshot = self._prompt_registry.snapshot()
+        job_id = metadata.get("job_id", "unknown")
         if not infer:
             returned_memories = []
             for message_dict in messages:
@@ -1446,26 +1598,57 @@ class AsyncMemory(MemoryBase):
                         "role": message_dict["role"],
                     }
                 )
+            self._pipeline_observer.emit(
+                job_id,
+                "VectorMutationPlanningStage",
+                "raw_output",
+                {"vector_write_payload": returned_memories, "prompt_version": prompt_snapshot.version},
+            )
             return returned_memories
 
         parsed_messages = parse_messages(messages)
+        is_agent_memory = self._should_use_agent_memory_extraction(messages, metadata)
+        fact_llm, fact_provider = _resolve_stage_llm(self, "semantic_fact_extraction", self.llm)
+        prompt_context = {
+            "user_id": metadata.get("user_id") or "current user_id",
+            "parsed_messages": parsed_messages,
+            "job_id": metadata.get("job_id", ""),
+            "analysis_batch_id": metadata.get("analysis_batch_id", ""),
+            "provider": fact_provider,
+            "pipeline_version": "mem0_modular_v1",
+            "metadata": metadata,
+        }
         if self.config.custom_fact_extraction_prompt:
             system_prompt = self.config.custom_fact_extraction_prompt
             user_prompt = f"Input:\n{parsed_messages}"
+        elif is_agent_memory:
+            system_prompt = self._prompt_registry.render("semantic.agent_fact.system", prompt_context)
+            user_prompt = self._prompt_registry.render("semantic.agent_fact.user", prompt_context)
         else:
-            # Determine if this should use agent memory extraction based on agent_id presence
-            # and role types in messages
-            is_agent_memory = self._should_use_agent_memory_extraction(messages, metadata)
-            system_prompt, user_prompt = get_fact_retrieval_messages(
-                parsed_messages,
-                is_agent_memory,
-                user_id=metadata.get("user_id"),
-            )
+            system_prompt = self._prompt_registry.render("semantic.user_fact.system", prompt_context)
+            user_prompt = self._prompt_registry.render("semantic.user_fact.user", prompt_context)
 
+        self._pipeline_observer.emit(
+            job_id,
+            "SemanticFactExtractionStage",
+            "rendered_prompt",
+            {
+                "prompt_key": "semantic.agent_fact.system" if is_agent_memory else "semantic.user_fact.system",
+                "prompt_version": prompt_snapshot.version,
+                "provider_name": fact_provider,
+                "rendered_prompt": system_prompt,
+            },
+        )
         response = await asyncio.to_thread(
-            self.llm.generate_response,
+            fact_llm.generate_response,
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
             response_format={"type": "json_object"},
+        )
+        self._pipeline_observer.emit(
+            job_id,
+            "SemanticFactExtractionStage",
+            "raw_output",
+            {"provider_name": fact_provider, "raw_output": response},
         )
         try:
             response = remove_code_blocks(response)
@@ -1482,6 +1665,12 @@ class AsyncMemory(MemoryBase):
         except Exception as e:
             logger.error(f"Error in new_retrieved_facts: {e}")
             new_retrieved_facts = []
+        self._pipeline_observer.emit(
+            job_id,
+            "SemanticFactExtractionStage",
+            "completed",
+            {"facts": new_retrieved_facts, "provider_name": fact_provider},
+        )
 
         if not new_retrieved_facts:
             logger.debug("No new facts retrieved from input. Skipping memory update LLM call.")
@@ -1526,18 +1715,39 @@ class AsyncMemory(MemoryBase):
             retrieved_old_memory[idx]["id"] = str(idx)
 
         if new_retrieved_facts:
+            update_prefix = self.config.custom_update_memory_prompt or self._prompt_registry.get_template(
+                "semantic.update_memory.prefix"
+            )
             function_calling_prompt = get_update_memory_messages(
-                retrieved_old_memory, new_retrieved_facts, self.config.custom_update_memory_prompt
+                retrieved_old_memory, new_retrieved_facts, update_prefix
+            )
+            update_llm, update_provider = _resolve_stage_llm(self, "summary_update_memory", self.llm)
+            self._pipeline_observer.emit(
+                job_id,
+                "VectorMutationPlanningStage",
+                "rendered_prompt",
+                {
+                    "prompt_key": "semantic.update_memory.prefix",
+                    "prompt_version": prompt_snapshot.version,
+                    "provider_name": update_provider,
+                    "rendered_prompt": function_calling_prompt,
+                },
             )
             try:
                 response = await asyncio.to_thread(
-                    self.llm.generate_response,
+                    update_llm.generate_response,
                     messages=[{"role": "user", "content": function_calling_prompt}],
                     response_format={"type": "json_object"},
                 )
             except Exception as e:
                 logger.error(f"Error in new memory actions response: {e}")
                 response = ""
+            self._pipeline_observer.emit(
+                job_id,
+                "VectorMutationPlanningStage",
+                "raw_output",
+                {"provider_name": update_provider, "raw_output": response},
+            )
             try:
                 if not response or not response.strip():
                     logger.warning("Empty response from LLM, no memories to extract")
@@ -1635,6 +1845,12 @@ class AsyncMemory(MemoryBase):
             "mem0.add",
             self,
             {"version": self.api_version, "keys": keys, "encoded_ids": encoded_ids, "sync_type": "async"},
+        )
+        self._pipeline_observer.emit(
+            job_id,
+            "VectorMutationPlanningStage",
+            "completed",
+            {"vector_write_payload": returned_memories, "prompt_version": prompt_snapshot.version},
         )
         return returned_memories
 

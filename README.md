@@ -150,6 +150,7 @@ For detailed integration steps, see the [Quickstart](https://docs.mem0.ai/quicks
 ## 📚 Documentation & Support
 
 - Full docs: https://docs.mem0.ai
+- Repository architecture: [docs/open-source/repository-architecture.mdx](docs/open-source/repository-architecture.mdx)
 - Community: [Discord](https://mem0.dev/DiG) · [Twitter](https://x.com/mem0ai)
 - Contact: founders@mem0.ai
 
